@@ -1,0 +1,5 @@
+source_table_name: for_hire_vehicle
+dest_table_name: fhv_pg
+timestamp_column: ""
+write_disposition: append
+initial_load_date: null

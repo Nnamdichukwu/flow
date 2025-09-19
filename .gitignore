@@ -1,0 +1,3 @@
+.env
+ingest_metadata.duckdb.wal
+ingest_metadata.duckdb
