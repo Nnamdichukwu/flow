@@ -1,5 +1,5 @@
 source_table_name: for_hire_vehicle
 dest_table_name: fhv_pg
-timestamp_column: ""
+timestamp_column: etl_sync_date
 write_disposition: append
 initial_load_date: null

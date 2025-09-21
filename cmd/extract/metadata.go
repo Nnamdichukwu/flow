@@ -3,6 +3,7 @@ package extract
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
@@ -38,7 +39,7 @@ func ReadMetadata(ctx context.Context, db *sql.DB, tableName string) (*Metadata,
 	var metadata Metadata
 
 	if err := row.Scan(&metadata.Id, &metadata.SourceTableName, &metadata.LoadedAt, &metadata.LoadedBy); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return &Metadata{}, err
 		}
 	}
@@ -46,16 +47,22 @@ func ReadMetadata(ctx context.Context, db *sql.DB, tableName string) (*Metadata,
 	return &metadata, nil
 
 }
-
 func InsertIntoMetadata(ctx context.Context, db *sql.DB, metadata *Metadata) error {
-
-	query := `INSERT INTO metadata (id, source_table_name, loaded_at, loaded_by) VALUES ($1, $2, $3, $4)`
-
-	_, err := db.ExecContext(ctx, query, metadata.Id, metadata.SourceTableName, metadata.LoadedAt, metadata.LoadedBy)
-	if err != nil {
-		return err
-	}
-
-	return nil
-
+	query := `
+        MERGE INTO metadata AS m
+        USING (SELECT 
+                      $2::VARCHAR AS source_table_name,
+                      $3::TIMESTAMP AS loaded_at,
+                      $4::VARCHAR AS loaded_by) AS s
+        ON m.source_table_name = s.source_table_name
+        WHEN MATCHED THEN
+            UPDATE SET loaded_at = s.loaded_at
+        WHEN NOT MATCHED THEN
+            INSERT (id, source_table_name, loaded_at, loaded_by)
+            VALUES ($1, s.source_table_name, s.loaded_at, s.loaded_by)
+    `
+	_, err := db.ExecContext(ctx, query,
+		metadata.Id, metadata.SourceTableName, metadata.LoadedAt, metadata.LoadedBy,
+	)
+	return err
 }

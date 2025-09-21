@@ -16,16 +16,22 @@ func ReadPgTable(ctx context.Context, db *sql.DB, reader YamlReader, metadata Me
 	)
 
 	loadedAt := metadata.LoadedAt
-
+	fmt.Printf("Loaded at %v\n", loadedAt)
 	if !loadedAt.IsZero() && reader.TimestampColumn != "" {
 
-		query = fmt.Sprintf("SELECT * FROM %s WHERE %s >$1 ", reader.SourceTableName, reader.TimestampColumn)
+		query = fmt.Sprintf("SELECT * FROM %s WHERE %s >=$1 ", reader.SourceTableName, reader.TimestampColumn)
+		fmt.Printf("Query: %s\n", query)
+		rows, err = db.QueryContext(ctx, query, metadata.LoadedAt.UTC())
 
-		rows, err = db.QueryContext(ctx, query, metadata.LoadedAt)
+	} else if loadedAt.IsZero() && reader.InitialLoadDate != nil && reader.TimestampColumn != "" {
+		query = fmt.Sprintf("SELECT * FROM %s WHERE %s >=$1 ", reader.SourceTableName, reader.TimestampColumn)
+		rows, err = db.QueryContext(ctx, query, reader.InitialLoadDate.UTC())
+		fmt.Printf("Query: %s\n", query)
 
 	} else {
 		query = fmt.Sprintf("SELECT * FROM %s ", reader.SourceTableName)
 		rows, err = db.QueryContext(ctx, query)
+		fmt.Printf("Query: %s\n", query)
 	}
 	if err != nil {
 		return nil, err
