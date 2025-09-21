@@ -37,15 +37,17 @@ func WriteToParquet(p source.ParquetFile, data []map[string]interface{}) error {
 
 	// Create JSON writer with dynamic schema
 	jw, err := writer.NewJSONWriter(jsonSchema, p, 10)
+
 	if err != nil {
 		return fmt.Errorf("failed to create JSON writer: %v", err)
 	}
-	defer jw.WriteStop()
 
+	defer jw.WriteStop()
 	// Write each row as JSON
 	for _, row := range normalized {
 		// Convert map to JSON string
 		jsonBytes, err := json.Marshal(row)
+
 		if err != nil {
 			return fmt.Errorf("failed to marshal row: %v", err)
 		}
@@ -54,6 +56,5 @@ func WriteToParquet(p source.ParquetFile, data []map[string]interface{}) error {
 			return fmt.Errorf("failed to write row: %v", err)
 		}
 	}
-
 	return nil
 }

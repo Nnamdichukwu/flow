@@ -20,6 +20,7 @@ type Metadata struct {
 
 func CreateMetadata(ctx context.Context) error {
 	db, err := sql.Open("duckdb", "ingest_metadata.duckdb")
+
 	if err != nil {
 		return err
 	}
@@ -28,12 +29,13 @@ func CreateMetadata(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	DuckDB = db
+
 	return nil
 }
 
 func ReadMetadata(ctx context.Context, db *sql.DB, tableName string) (*Metadata, error) {
-
 	query := `SELECT * FROM metadata WHERE source_table_name = $1`
 	row := db.QueryRowContext(ctx, query, tableName)
 	var metadata Metadata
@@ -43,9 +45,7 @@ func ReadMetadata(ctx context.Context, db *sql.DB, tableName string) (*Metadata,
 			return &Metadata{}, err
 		}
 	}
-
 	return &metadata, nil
-
 }
 func InsertIntoMetadata(ctx context.Context, db *sql.DB, metadata *Metadata) error {
 	query := `
@@ -61,8 +61,12 @@ func InsertIntoMetadata(ctx context.Context, db *sql.DB, metadata *Metadata) err
             INSERT (id, source_table_name, loaded_at, loaded_by)
             VALUES ($1, s.source_table_name, s.loaded_at, s.loaded_by)
     `
+
 	_, err := db.ExecContext(ctx, query,
 		metadata.Id, metadata.SourceTableName, metadata.LoadedAt, metadata.LoadedBy,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }

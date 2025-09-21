@@ -29,16 +29,9 @@ func normalizeValue(v interface{}) interface{} {
 
 func NormalizeRow(row map[string]interface{}) map[string]interface{} {
 	normalized := map[string]interface{}{}
+
 	for k, v := range row {
 		normalized[k] = normalizeValue(v)
-	}
-	return normalized
-}
-
-func NormalizeData(data []map[string]interface{}) []map[string]interface{} {
-	normalized := make([]map[string]interface{}, len(data))
-	for i, row := range data {
-		normalized[i] = NormalizeRow(row)
 	}
 	return normalized
 }
@@ -48,7 +41,6 @@ func GenerateJSONSchema(data []map[string]interface{}) (string, error) {
 	if len(data) == 0 {
 		return "", fmt.Errorf("no data provided to generate schema")
 	}
-
 	// Use first row to determine schema
 	firstRow := data[0]
 
@@ -71,7 +63,6 @@ func GenerateJSONSchema(data []map[string]interface{}) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return string(schemaBytes), nil
 }
 

@@ -24,10 +24,11 @@ func ReadYaml(file string) (*YamlReader, error) {
 	}
 
 	var yamlReader YamlReader
+
 	err = yaml.Unmarshal(data, &yamlReader)
+
 	if err != nil {
 		return nil, err
 	}
 	return &yamlReader, nil
-
 }
