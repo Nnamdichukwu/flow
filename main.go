@@ -57,11 +57,11 @@ func main() {
 
 	yamlReader, err := extract.ReadYaml("ingest.yaml")
 
-	log.Println(len(yamlReader.Sources))
-
 	if err != nil {
-		log.Fatal("Failed to read ingest yaml")
+		log.Fatal(err)
 	}
+
+	log.Println(len(yamlReader.Sources))
 
 	var wg sync.WaitGroup
 
@@ -118,7 +118,7 @@ func main() {
 func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) error {
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("Job canceled for processing source: %s", source.SourceTableName)
+		return fmt.Errorf("job canceled for processing source: %s", source.SourceTableName)
 	default:
 	}
 
@@ -132,7 +132,7 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 	fmt.Println(source.SourceTableName)
 
 	if err != nil {
-		fmt.Println("Failed to read metadata")
+		fmt.Println("failed to read metadata")
 		if errors.Is(err, sql.ErrNoRows) {
 			readTable = &extract.Metadata{
 				Id:              uuid.New().String(),
@@ -141,9 +141,9 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 				LoadedAt:        time.Now(),
 			}
 		} else {
-			return fmt.Errorf("Failed to read metadata: %w", err)
+			return fmt.Errorf("failed to read metadata: %w", err)
 		}
-		return fmt.Errorf("Failed to read metadata: %w", err)
+		return fmt.Errorf("failed to read metadata: %w", err)
 	}
 
 	fmt.Printf("read metadata successfully for table %s\n", readTable.SourceTableName)
@@ -151,12 +151,12 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 	reader, err := extract.ReadPgTable(ctx, sqlDB, source, *readTable)
 
 	if err != nil {
-		return fmt.Errorf("Failed to read pg_table from source: %w", err)
+		return fmt.Errorf("failed to read pg_table from source: %w", err)
 	}
 
 	fmt.Printf("read pg_table successfully for table %s\n", readTable.SourceTableName)
 
-	fmt.Printf("Length of pg table: %d\n", len(reader))
+	fmt.Printf("length of pg table: %d\n", len(reader))
 
 	if len(reader) == 0 {
 		log.Println("No rows found")
@@ -178,10 +178,10 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 	bucket, err := r2.GetBucket(ctx)
 
 	if err != nil {
-		fmt.Errorf("Failed to get bucket: %w", err)
+		log.Printf("failed to get bucket: %v", err)
 		_, err = r2.Create(ctx)
 		if err != nil {
-			return fmt.Errorf("Failed to create bucket: %w", err)
+			return fmt.Errorf("failed to create bucket: %w", err)
 		}
 		fmt.Println("Created bucket")
 	}
@@ -195,7 +195,7 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 	dir := fmt.Sprintf("./data/%s", metadata.SourceTableName)
 
 	if err = os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
-		return fmt.Errorf("Failed to create directory %s: %w", dir, err)
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	parquetLoader := loader.ParquetLoader{
@@ -206,17 +206,17 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 	fw, err := local.NewLocalFileWriter(parquetLoader.ParquetFile)
 
 	if err != nil {
-		return fmt.Errorf("Failed to create local file: %w", err)
+		return fmt.Errorf("failed to create local file: %w", err)
 	}
 
 	if err = loader.WriteToParquet(fw, reader); err != nil {
-		return fmt.Errorf("Failed to write parquet file: %w", err)
+		return fmt.Errorf("failed to write parquet file: %w", err)
 	}
 
 	parquetFile, err := os.Open(parquetLoader.ParquetFile)
 
 	if err != nil {
-		return fmt.Errorf("Failed to open parquet file: %w", err)
+		return fmt.Errorf("failed to open parquet file: %w", err)
 	}
 
 	log.Printf("parquet loaded successfully")
@@ -226,7 +226,7 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 	r2.Body = parquetFile
 
 	if err = r2.UploadObject(ctx); err != nil {
-		return fmt.Errorf("Failed to upload parquet file: %w", err)
+		return fmt.Errorf("failed to upload parquet file: %w", err)
 	}
 
 	log.Println("uploaded file to r2")
@@ -234,13 +234,13 @@ func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) e
 	metadata.LoadedAt = time.Now()
 
 	if err = extract.InsertIntoMetadata(ctx, extract.DuckDB, &metadata); err != nil {
-		return fmt.Errorf("Failed to insert into metadata: %w", err)
+		return fmt.Errorf("failed to insert into metadata: %w", err)
 	}
 
 	fmt.Printf("insert metadata successfully for table %s at %s\n", metadata.SourceTableName, metadata.LoadedAt.Format("20060102150405"))
 
 	if err = os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("Failed to remove directory %s: %w", dir, err)
+		return fmt.Errorf("failed to remove directory %s: %w", dir, err)
 	}
 	return nil
 }
