@@ -99,13 +99,16 @@ func main() {
 	close(sourceChan)
 
 	wg.Wait()
+
 	go func() {
 		wg.Wait()
 		close(errChan)
 	}()
+
 	if err := <-errChan; err != nil {
 		log.Fatal(err)
 	}
+
 	log.Println("done")
 	// Make this work with an R2 data lake
 	// Implement pyspark to transform data and load to clickhouse
