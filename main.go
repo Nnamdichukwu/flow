@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Nnamdichukwu/flow/cmd/config"
 	"github.com/Nnamdichukwu/flow/cmd/extract"
+	"github.com/Nnamdichukwu/flow/cmd/helpers"
 	"github.com/Nnamdichukwu/flow/cmd/loader"
 	"github.com/Nnamdichukwu/flow/cmd/storage"
 	"github.com/google/uuid"
@@ -25,7 +29,9 @@ func main() {
 
 	fmt.Println("env vars loaded")
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer cancel()
 
 	pgCredentials := config.PostgresConfig
 
@@ -51,43 +57,107 @@ func main() {
 
 	yamlReader, err := extract.ReadYaml("ingest.yaml")
 
+	log.Println(len(yamlReader.Sources))
+
 	if err != nil {
+		log.Fatal("Failed to read ingest yaml")
+	}
+
+	var wg sync.WaitGroup
+
+	sourceChan := make(chan extract.Sources)
+
+	errChan := make(chan error, len(yamlReader.Sources))
+
+	numWorkers := 5
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for source := range sourceChan {
+				if err := processSource(ctx, sqlDB, source); err != nil {
+					if errors.Is(err, helpers.ErrNoRows) {
+						log.Printf("worker %d: no rows found for %s, skipping\n", id, source.SourceTableName)
+						continue
+
+					} else {
+						errChan <- err
+						cancel()
+						return
+					}
+
+				}
+			}
+		}(i + 1)
+	}
+
+	for _, source := range yamlReader.Sources {
+		sourceChan <- source
+	}
+
+	close(sourceChan)
+
+	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(errChan)
+	}()
+	if err := <-errChan; err != nil {
 		log.Fatal(err)
 	}
+	log.Println("done")
+	// Make this work with an R2 data lake
+	// Implement pyspark to transform data and load to clickhouse
+	// Write unit tests
+}
 
-	yaml := extract.YamlReader{
-		SourceTableName:  yamlReader.SourceTableName,
-		DestTableName:    yamlReader.DestTableName,
-		TimestampColumn:  yamlReader.TimestampColumn,
-		WriteDisposition: yamlReader.WriteDisposition,
-		InitialLoadDate:  yamlReader.InitialLoadDate,
+func processSource(ctx context.Context, sqlDB *sql.DB, source extract.Sources) error {
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("Job canceled for processing source: %s", source.SourceTableName)
+	default:
 	}
-
-	log.Printf("writing metadata %s\n", yaml.SourceTableName)
 
 	metadata := extract.Metadata{
 		Id:              uuid.New().String(),
-		SourceTableName: yamlReader.SourceTableName,
+		SourceTableName: source.SourceTableName,
 		LoadedBy:        "Postgres",
 	}
 
-	readTable, err := extract.ReadMetadata(ctx, extract.DuckDB, metadata.SourceTableName)
+	readTable, err := extract.ReadMetadata(ctx, extract.DuckDB, source.SourceTableName)
+	fmt.Println(source.SourceTableName)
 
 	if err != nil {
-		metadata.LoadedAt = time.Now()
-		log.Fatal(err)
+		fmt.Println("Failed to read metadata")
+		if errors.Is(err, sql.ErrNoRows) {
+			readTable = &extract.Metadata{
+				Id:              uuid.New().String(),
+				SourceTableName: source.SourceTableName,
+				LoadedBy:        "Postgres",
+				LoadedAt:        time.Now(),
+			}
+		} else {
+			return fmt.Errorf("Failed to read metadata: %w", err)
+		}
+		return fmt.Errorf("Failed to read metadata: %w", err)
 	}
 
 	fmt.Printf("read metadata successfully for table %s\n", readTable.SourceTableName)
 
-	reader, err := extract.ReadPgTable(ctx, sqlDB, yaml, *readTable)
+	reader, err := extract.ReadPgTable(ctx, sqlDB, source, *readTable)
 
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to read pg_table from source: %w", err)
 	}
 
+	fmt.Printf("read pg_table successfully for table %s\n", readTable.SourceTableName)
+
+	fmt.Printf("Length of pg table: %d\n", len(reader))
+
 	if len(reader) == 0 {
-		log.Fatal("no rows found")
+		log.Println("No rows found")
+		return helpers.ErrNoRows
 	}
 
 	fmt.Printf("The total size of the table is %d \n", len(reader))
@@ -103,11 +173,12 @@ func main() {
 	}
 
 	bucket, err := r2.GetBucket(ctx)
+
 	if err != nil {
-		fmt.Println(err)
+		fmt.Errorf("Failed to get bucket: %w", err)
 		_, err = r2.Create(ctx)
 		if err != nil {
-			fmt.Println(err)
+			return fmt.Errorf("Failed to create bucket: %w", err)
 		}
 		fmt.Println("Created bucket")
 	}
@@ -115,13 +186,13 @@ func main() {
 	fmt.Printf("Bucket already exists %s\n", bucket.Name)
 
 	if len(reader) == 0 {
-		log.Fatal("no parquet file to load")
+		return fmt.Errorf("no parquet file to load")
 	}
 
 	dir := fmt.Sprintf("./data/%s", metadata.SourceTableName)
 
 	if err = os.MkdirAll(dir, os.ModePerm); err != nil && !os.IsExist(err) {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to create directory %s: %w", dir, err)
 	}
 
 	parquetLoader := loader.ParquetLoader{
@@ -132,17 +203,17 @@ func main() {
 	fw, err := local.NewLocalFileWriter(parquetLoader.ParquetFile)
 
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to create local file: %w", err)
 	}
 
 	if err = loader.WriteToParquet(fw, reader); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to write parquet file: %w", err)
 	}
 
 	parquetFile, err := os.Open(parquetLoader.ParquetFile)
 
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to open parquet file: %w", err)
 	}
 
 	log.Printf("parquet loaded successfully")
@@ -152,7 +223,7 @@ func main() {
 	r2.Body = parquetFile
 
 	if err = r2.UploadObject(ctx); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to upload parquet file: %w", err)
 	}
 
 	log.Println("uploaded file to r2")
@@ -160,17 +231,13 @@ func main() {
 	metadata.LoadedAt = time.Now()
 
 	if err = extract.InsertIntoMetadata(ctx, extract.DuckDB, &metadata); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to insert into metadata: %w", err)
 	}
 
 	fmt.Printf("insert metadata successfully for table %s at %s\n", metadata.SourceTableName, metadata.LoadedAt.Format("20060102150405"))
 
 	if err = os.RemoveAll(dir); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Failed to remove directory %s: %w", dir, err)
 	}
-
-	log.Println("removed temporary directory")
-	// Make this work with an R2 data lake
-	// Implement pyspark to transform data and load to clickhouse
-	// Write unit tests
+	return nil
 }

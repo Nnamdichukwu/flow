@@ -5,30 +5,31 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/Nnamdichukwu/flow/cmd/helpers"
 	_ "github.com/lib/pq"
 )
 
-var (
-	query string
-	err   error
-	rows  *sql.Rows
-)
+func ReadPgTable(ctx context.Context, db *sql.DB, source Sources, metadata Metadata) ([]map[string]interface{}, error) {
+	var (
+		query string
+		err   error
+		rows  *sql.Rows
+	)
 
-func ReadPgTable(ctx context.Context, db *sql.DB, reader YamlReader, metadata Metadata) ([]map[string]interface{}, error) {
 	loadedAt := metadata.LoadedAt
 
 	fmt.Printf("Loaded at %v\n", loadedAt)
 
-	if !loadedAt.IsZero() && reader.TimestampColumn != "" {
-		query = fmt.Sprintf("SELECT * FROM %s WHERE %s >=$1 ", reader.SourceTableName, reader.TimestampColumn)
+	if !loadedAt.IsZero() && source.TimestampColumn != "" {
+		query = fmt.Sprintf("SELECT * FROM %s WHERE %s >=$1 ", source.SourceTableName, source.TimestampColumn)
 		fmt.Printf("Query: %s\n", query)
 		rows, err = db.QueryContext(ctx, query, metadata.LoadedAt.UTC())
-	} else if loadedAt.IsZero() && reader.InitialLoadDate != nil && reader.TimestampColumn != "" {
-		query = fmt.Sprintf("SELECT * FROM %s WHERE %s >=$1 ", reader.SourceTableName, reader.TimestampColumn)
-		rows, err = db.QueryContext(ctx, query, reader.InitialLoadDate.UTC())
+	} else if loadedAt.IsZero() && source.InitialLoadDate != nil && source.TimestampColumn != "" {
+		query = fmt.Sprintf("SELECT * FROM %s WHERE %s >=$1 ", source.SourceTableName, source.TimestampColumn)
+		rows, err = db.QueryContext(ctx, query, source.InitialLoadDate.UTC())
 		fmt.Printf("Query: %s\n", query)
 	} else {
-		query = fmt.Sprintf("SELECT * FROM %s ", reader.SourceTableName)
+		query = fmt.Sprintf("SELECT * FROM %s ", source.SourceTableName)
 		rows, err = db.QueryContext(ctx, query)
 		fmt.Printf("Query: %s\n", query)
 	}
@@ -72,9 +73,8 @@ func ReadPgTable(ctx context.Context, db *sql.DB, reader YamlReader, metadata Me
 		}
 		results = append(results, rowValues)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if len(results) == 0 {
+		return nil, helpers.ErrNoRows
 	}
 	return results, nil
 }
